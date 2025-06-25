@@ -606,12 +606,48 @@
                 const countrySelect = document.getElementById('countrySelect');
                 const selectedCountry = countrySelect.value;
                 
-                // Determine the country/region query
-                const countryQuery = selectedCountry || (region === 'all' ? 'all' : region);
+                // If specific country selected, use that
+                if (selectedCountry) {
+                    const apiUrl = `https://api.worldbank.org/v2/country/${selectedCountry}/indicator/${indicator}?date=${year}&format=json&per_page=50`;
+                    console.log('Fetching data from:', apiUrl);
+                    return this.fetchDataFromAPI(apiUrl, indicator);
+                }
+                
+                // For regions, we need to get individual countries, not regional aggregates
+                let countryQuery;
+                if (region === 'all') {
+                    countryQuery = 'all';
+                } else {
+                    // Map region codes to country lists for individual country data
+                    const regionCountries = this.getCountriesInRegion(region);
+                    if (regionCountries.length > 0) {
+                        countryQuery = regionCountries.join(';');
+                    } else {
+                        countryQuery = 'all'; // Fallback to all countries
+                    }
+                }
+                
                 const apiUrl = `https://api.worldbank.org/v2/country/${countryQuery}/indicator/${indicator}?date=${year}&format=json&per_page=300`;
-                
                 console.log('Fetching data from:', apiUrl);
+                return this.fetchDataFromAPI(apiUrl, indicator);
+            }
+
+            getCountriesInRegion(region) {
+                // Map World Bank region codes to actual country codes
+                const regionMap = {
+                    'SAS': ['AFG', 'BGD', 'BTN', 'IND', 'MDV', 'NPL', 'PAK', 'LKA'], // South Asia
+                    'EAS': ['CHN', 'JPN', 'KOR', 'MNG', 'PRK'], // East Asia & Pacific (sample)
+                    'ECS': ['ALB', 'ARM', 'AZE', 'BLR', 'BIH', 'BGR', 'HRV', 'CZE', 'EST', 'GEO', 'HUN', 'KAZ', 'KGZ', 'LVA', 'LTU', 'MDA', 'MNE', 'POL', 'ROU', 'RUS', 'SRB', 'SVK', 'SVN', 'TJK', 'TKM', 'UKR', 'UZB'], // Europe & Central Asia
+                    'LCN': ['ARG', 'BLZ', 'BOL', 'BRA', 'CHL', 'COL', 'CRI', 'CUB', 'DOM', 'ECU', 'SLV', 'GTM', 'GUY', 'HTI', 'HND', 'JAM', 'MEX', 'NIC', 'PAN', 'PRY', 'PER', 'SUR', 'TTO', 'URY', 'VEN'], // Latin America & Caribbean
+                    'MEA': ['DZA', 'BHR', 'EGY', 'IRN', 'IRQ', 'ISR', 'JOR', 'KWT', 'LBN', 'LBY', 'MAR', 'OMN', 'QAT', 'SAU', 'SYR', 'TUN', 'ARE', 'YEM'], // Middle East & North Africa
+                    'NAC': ['CAN', 'USA'], // North America
+                    'AFR': ['AGO', 'BEN', 'BWA', 'BFA', 'BDI', 'CMR', 'CPV', 'CAF', 'TCD', 'COM', 'COG', 'COD', 'CIV', 'DJI', 'GNQ', 'ERI', 'ETH', 'GAB', 'GMB', 'GHA', 'GIN', 'GNB', 'KEN', 'LSO', 'LBR', 'MDG', 'MWI', 'MLI', 'MRT', 'MUS', 'MOZ', 'NAM', 'NER', 'NGA', 'RWA', 'STP', 'SEN', 'SYC', 'SLE', 'SOM', 'ZAF', 'SSD', 'SDN', 'SWZ', 'TZA', 'TGO', 'UGA', 'ZMB', 'ZWE'] // Sub-Saharan Africa
+                };
                 
+                return regionMap[region] || [];
+            }
+
+            async fetchDataFromAPI(apiUrl, indicator) {
                 const response = await fetch(apiUrl);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -630,17 +666,33 @@
                     throw new Error('No data returned from API');
                 }
                 
+                console.log(`📊 Raw data items: ${data.length}`);
+                
                 // Filter out null values and format data
-                return data
-                    .filter(item => item && item.value !== null && item.value !== undefined)
+                const processedData = data
+                    .filter(item => {
+                        // Filter out regional aggregates and null values
+                        if (!item || item.value === null || item.value === undefined) return false;
+                        
+                        const countryCode = item.countryiso3code || item.country?.id;
+                        
+                        // Skip regional aggregates (they usually have longer codes or specific patterns)
+                        if (!countryCode || countryCode.length !== 3) return false;
+                        
+                        // Only include countries we have coordinates for
+                        return this.countryCoordinates[countryCode];
+                    })
                     .map(item => ({
                         countryCode: item.countryiso3code || item.country?.id,
                         countryName: item.country?.value || item.country?.name || 'Unknown',
                         value: parseFloat(item.value),
                         year: item.date,
                         indicator: item.indicator?.value || indicator
-                    }))
-                    .filter(item => item.countryCode && this.countryCoordinates[item.countryCode]);
+                    }));
+                
+                console.log(`✅ Processed data items: ${processedData.length}`);
+                
+                return processedData;
             }
 
             updateVisualization() {
